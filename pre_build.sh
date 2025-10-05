@@ -4,8 +4,9 @@ source .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
-# Download SAM checkpoint if not exists
-if [ ! -f sam_vit_b_01ec64.pth ]; then
+# Download SAM checkpoint if missing
+SAM_MODEL="sam_vit_b_01ec64.pth"
+if [ ! -f "$SAM_MODEL" ]; then
     echo "Downloading SAM checkpoint..."
-    curl -L -o sam_vit_b_01ec64.pth "https://huggingface.co/..."
+    curl -L -o "$SAM_MODEL" "https://huggingface.co/facebook/segment-anything/resolve/main/sam_vit_b_01ec64.pth"
 fi
