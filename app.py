@@ -40,18 +40,27 @@ def init_sam():
     try:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {device}")
-        checkpoint = "sam_vit_b_01ec64.pth"
+        # Store checkpoint on persistent disk so it's cached across deploys
+        checkpoint = os.path.join(app.config['UPLOAD_FOLDER'], "sam_vit_b_01ec64.pth")
         
-        # Download checkpoint if it doesn't exist
+        # Download checkpoint if it doesn't exist with retries/backoff
         if not os.path.exists(checkpoint):
             logger.info("Downloading SAM checkpoint...")
-            import urllib.request
+            import urllib.request, time
             checkpoint_url = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
-            try:
-                urllib.request.urlretrieve(checkpoint_url, checkpoint)
-                logger.info("SAM checkpoint downloaded successfully!")
-            except Exception as e:
-                logger.error(f"Failed to download SAM checkpoint: {str(e)}")
+            attempts = 5
+            for attempt in range(1, attempts + 1):
+                try:
+                    with urllib.request.urlopen(checkpoint_url, timeout=30) as response, open(checkpoint, 'wb') as out_file:
+                        out_file.write(response.read())
+                    logger.info("SAM checkpoint downloaded successfully!")
+                    break
+                except Exception as e:
+                    wait_seconds = min(30, 2 ** attempt)
+                    logger.error(f"Failed to download SAM checkpoint (attempt {attempt}/{attempts}): {str(e)}. Retrying in {wait_seconds}s...")
+                    time.sleep(wait_seconds)
+            if not os.path.exists(checkpoint):
+                logger.error("SAM checkpoint download failed after retries; continuing without SAM.")
                 return False
         
         sam = sam_model_registry["vit_b"](checkpoint=checkpoint)
