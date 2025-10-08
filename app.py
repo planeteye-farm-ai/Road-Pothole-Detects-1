@@ -25,7 +25,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['DATABASE'] = 'potholes.db'
-app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 app.config['MAX_CONTENT_LENGTH'] = 16*1024*1024  # 16 MB
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -41,9 +41,19 @@ def init_sam():
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {device}")
         checkpoint = "sam_vit_b_01ec64.pth"
+        
+        # Download checkpoint if it doesn't exist
         if not os.path.exists(checkpoint):
-            logger.error("SAM checkpoint missing!")
-            return False
+            logger.info("Downloading SAM checkpoint...")
+            import urllib.request
+            checkpoint_url = "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"
+            try:
+                urllib.request.urlretrieve(checkpoint_url, checkpoint)
+                logger.info("SAM checkpoint downloaded successfully!")
+            except Exception as e:
+                logger.error(f"Failed to download SAM checkpoint: {str(e)}")
+                return False
+        
         sam = sam_model_registry["vit_b"](checkpoint=checkpoint)
         sam.to(device)
         predictor = SamPredictor(sam)
@@ -105,7 +115,7 @@ def overlay_image(image_np, mask):
 # ------------------------
 @app.route('/')
 def index():
-    return render_template('index1.html', sam_loaded=sam_loaded)
+    return render_template('index.html', sam_loaded=sam_loaded)
 
 @app.route('/detect', methods=['POST'])
 def detect_pothole():
@@ -266,4 +276,6 @@ def initialize_app():
 
 if __name__ == "__main__":
     initialize_app()
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    socketio.run(app, host="0.0.0.0", port=port, debug=debug)
