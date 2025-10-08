@@ -117,6 +117,22 @@ def overlay_image(image_np, mask):
 def index():
     return render_template('index.html', sam_loaded=sam_loaded)
 
+# Ensure initialization happens when running under Gunicorn (import context)
+@app.before_first_request
+def _ensure_initialized():
+    try:
+        if not sam_loaded:
+            initialize_app()
+    except Exception as init_err:
+        logger.error(f"Initialization error: {str(init_err)}")
+
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'ok',
+        'sam_loaded': sam_loaded
+    }), 200
+
 @app.route('/detect', methods=['POST'])
 def detect_pothole():
     if not sam_loaded:
@@ -270,9 +286,15 @@ def show_map():
 # Main
 # ------------------------
 def initialize_app():
-    init_sam()
+    # Initialize the database first so routes don't fail while SAM loads
     init_db()
-    logger.info("App initialized")
+    # Load the SAM model in the background to avoid blocking first requests
+    try:
+        import threading
+        threading.Thread(target=init_sam, daemon=True).start()
+    except Exception as e:
+        logger.error(f"Failed to start SAM background init: {str(e)}")
+    logger.info("App initialized (DB ready, SAM loading in background)")
 
 if __name__ == "__main__":
     initialize_app()
