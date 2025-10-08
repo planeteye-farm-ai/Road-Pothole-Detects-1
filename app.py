@@ -117,15 +117,6 @@ def overlay_image(image_np, mask):
 def index():
     return render_template('index.html', sam_loaded=sam_loaded)
 
-# Ensure initialization happens when running under Gunicorn (import context)
-@app.before_first_request
-def _ensure_initialized():
-    try:
-        if not sam_loaded:
-            initialize_app()
-    except Exception as init_err:
-        logger.error(f"Initialization error: {str(init_err)}")
-
 @app.route('/health')
 def health():
     return jsonify({
@@ -296,8 +287,12 @@ def initialize_app():
         logger.error(f"Failed to start SAM background init: {str(e)}")
     logger.info("App initialized (DB ready, SAM loading in background)")
 
+"""
+Initialize immediately on import so it works under Gunicorn as well.
+"""
+initialize_app()
+
 if __name__ == "__main__":
-    initialize_app()
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     socketio.run(app, host="0.0.0.0", port=port, debug=debug)
