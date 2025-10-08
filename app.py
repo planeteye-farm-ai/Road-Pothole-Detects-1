@@ -30,61 +30,66 @@ app.config['MAX_CONTENT_LENGTH'] = 16*1024*1024  # 16 MB
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # ------------------------
-# SAM Model
+# SAM Model (Optimized)
 # ------------------------
 predictor = None
 sam_loaded = False
 
 def init_sam():
+    """
+    Initialize SAM model:
+    - Downloads checkpoint if missing
+    - Supports retries with exponential backoff
+    - Loads model to device (CPU or GPU)
+    """
     global predictor, sam_loaded
     try:
+        import requests
+        import time
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {device}")
-        # Store checkpoint on persistent disk so it's cached across deploys; allow override
-        checkpoint = os.environ.get('SAM_CHECKPOINT_PATH', os.path.join(app.config['UPLOAD_FOLDER'], "sam_vit_b_01ec64.pth"))
-        
-        # Download checkpoint if it doesn't exist with retries/backoff
-        if not os.path.exists(checkpoint):
-            logger.info("Downloading SAM checkpoint...")
-            import urllib.request, time, re, os as _os
-            checkpoint_url = os.environ.get('SAM_CHECKPOINT_URL', "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth")
 
-            def is_drive_url(url: str) -> bool:
-                return 'drive.google.com' in url
+        checkpoint = os.environ.get(
+            'SAM_CHECKPOINT_PATH',
+            os.path.join(app.config['UPLOAD_FOLDER'], "sam_vit_b_01ec64.pth")
+        )
+        checkpoint_url = os.environ.get(
+            'SAM_CHECKPOINT_URL',
+            "https://huggingface.co/lllyasviel/Annotators/resolve/main/sam_vit_b_01ec64.pth"
+        )
 
-            try:
-                if is_drive_url(checkpoint_url):
-                    logger.info("Detected Google Drive URL; using gdown.")
-                    import gdown
-                    # gdown supports both id-based and full URL
-                    gdown.download(checkpoint_url, checkpoint, quiet=False, fuzzy=True)
-                else:
-                    attempts = 5
-                    for attempt in range(1, attempts + 1):
-                        try:
-                            with urllib.request.urlopen(checkpoint_url, timeout=30) as response, open(checkpoint, 'wb') as out_file:
-                                out_file.write(response.read())
-                            logger.info("SAM checkpoint downloaded successfully!")
-                            break
-                        except Exception as e:
-                            wait_seconds = min(30, 2 ** attempt)
-                            logger.error(f"Failed to download SAM checkpoint (attempt {attempt}/{attempts}): {str(e)}. Retrying in {wait_seconds}s...")
-                            time.sleep(wait_seconds)
-            except Exception as e:
-                logger.error(f"SAM checkpoint download error: {str(e)}")
-
-            if not os.path.exists(checkpoint) or _os.path.getsize(checkpoint) < 1024:
-                logger.error("SAM checkpoint download failed; continuing without SAM.")
+        # Download checkpoint if missing
+        if not os.path.exists(checkpoint) or os.path.getsize(checkpoint) < 1024:
+            logger.info(f"Downloading SAM checkpoint from {checkpoint_url}...")
+            max_attempts = 5
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    with requests.get(checkpoint_url, stream=True, timeout=60) as r:
+                        r.raise_for_status()
+                        with open(checkpoint, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                    logger.info("SAM checkpoint downloaded successfully!")
+                    break
+                except Exception as e:
+                    wait = min(30, 2 ** attempt)
+                    logger.error(f"Attempt {attempt}/{max_attempts} failed: {e}. Retrying in {wait}s...")
+                    time.sleep(wait)
+            else:
+                logger.error("Failed to download SAM checkpoint after retries. SAM will not be loaded.")
                 return False
-        
+
+        # Load SAM
         sam = sam_model_registry["vit_b"](checkpoint=checkpoint)
         sam.to(device)
         predictor = SamPredictor(sam)
         sam_loaded = True
         logger.info("SAM loaded successfully!")
         return True
+
     except Exception as e:
-        logger.error(f"SAM init error: {str(e)}")
+        logger.error(f"SAM initialization error: {e}")
         return False
 
 # ------------------------
@@ -119,8 +124,6 @@ def estimate_area(area_pixels):
     return area_pixels / (pixels_per_meter**2)
 
 def estimate_depth(area_m2):
-    # Rough depth estimation: small area -> shallow, large area -> deeper
-    # Example scaling: 0.05 m minimum, +0.2 m for large potholes
     return 0.05 + min(area_m2 * 0.5, 0.5)
 
 def determine_severity(area_m2):
@@ -142,15 +145,12 @@ def index():
 
 @app.route('/health')
 def health():
-    return jsonify({
-        'status': 'ok',
-        'sam_loaded': sam_loaded
-    }), 200
+    return jsonify({'status': 'ok', 'sam_loaded': sam_loaded}), 200
 
 @app.route('/detect', methods=['POST'])
 def detect_pothole():
     if not sam_loaded:
-        return jsonify({'error': 'SAM not loaded'}), 500
+        return jsonify({'error': 'SAM not loaded yet'}), 500
     if 'image' not in request.files:
         return jsonify({'error': 'No image uploaded'}), 400
 
@@ -165,8 +165,8 @@ def detect_pothole():
     image_np = np.array(image)
 
     predictor.set_image(image_np)
-    h,w = image_np.shape[:2]
-    input_point = np.array([[w//2,h//2]])
+    h, w = image_np.shape[:2]
+    input_point = np.array([[w//2, h//2]])
     input_label = np.array([1])
 
     masks, scores, _ = predictor.predict(
@@ -175,7 +175,7 @@ def detect_pothole():
         multimask_output=False
     )
 
-    if len(masks)==0 or masks[0].size==0:
+    if len(masks) == 0 or masks[0].size == 0:
         return jsonify({'success': False})
 
     mask = masks[0]
@@ -297,12 +297,10 @@ def show_map():
     return m._repr_html_()
 
 # ------------------------
-# Main
+# Initialization
 # ------------------------
 def initialize_app():
-    # Initialize the database first so routes don't fail while SAM loads
     init_db()
-    # Load the SAM model in the background to avoid blocking first requests
     try:
         import threading
         threading.Thread(target=init_sam, daemon=True).start()
@@ -310,11 +308,11 @@ def initialize_app():
         logger.error(f"Failed to start SAM background init: {str(e)}")
     logger.info("App initialized (DB ready, SAM loading in background)")
 
-"""
-Initialize immediately on import so it works under Gunicorn as well.
-"""
 initialize_app()
 
+# ------------------------
+# Run
+# ------------------------
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
