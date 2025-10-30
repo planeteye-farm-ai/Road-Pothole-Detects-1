@@ -48,18 +48,35 @@ def init_sam():
 
         # Path to the model is now controlled by an environment variable
         checkpoint = os.environ.get('SAM_CHECKPOINT_PATH')
-        if not checkpoint or not os.path.exists(checkpoint):
-            logger.error("SAM checkpoint not found. Set SAM_CHECKPOINT_PATH and ensure model is downloaded in the build step.")
-            sam_loaded = False
-            return False
+         default_disk_path = "data/models/sam_vit_b_01ec64.pth"
 
-        # Load SAM
+        # Fallback order
+        if not checkpoint:
+            if os.path.exists(default_disk_path):
+                checkpoint = default_disk_path
+                logger.info(f"No env var set, found SAM model at default Render path: {default_disk_path}")
+            else:
+                logger.error("No SAM_CHECKPOINT_PATH provided and default model not found.")
+                sam_loaded = False
+                return False
+        elif not os.path.exists(checkpoint):
+            logger.warning(f"SAM_CHECKPOINT_PATH set but file not found: {checkpoint}")
+            if os.path.exists(default_disk_path):
+                logger.info(f"Using fallback model path: {default_disk_path}")
+                checkpoint = default_disk_path
+            else:
+                logger.error("No valid SAM checkpoint found.")
+                sam_loaded = False
+                return False
+
+        # Load SAM model
         logger.info(f"Loading SAM from checkpoint: {checkpoint}")
         sam = sam_model_registry["vit_b"](checkpoint=checkpoint)
         sam.to(device)
         predictor = SamPredictor(sam)
         sam_loaded = True
-        logger.info("SAM loaded successfully!")
+        logger.info("✅ SAM loaded successfully!")
+
         return True
 
     except Exception as e:
@@ -292,3 +309,4 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     socketio.run(app, host="0.0.0.0", port=port, debug=debug)
+
