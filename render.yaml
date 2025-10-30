@@ -1,21 +1,71 @@
+# 🚀 Render Deployment Configuration for Distress Detection (SAM + YOLOv8-ready)
+# ✅ Optimized for PRO plan (4 GB RAM, 1 CPU core)
+# ✅ Persistent disk for SAM model (2 GB)
+# ✅ Memory-safe tuning (no OOM on 2GB–4GB plans)
+
 services:
   - type: web
     name: road-pothole-detector
     env: python
-    plan: starter
+    plan: standard  # ✅ 4 GB RAM, suitable for SAM inference
+
     buildCommand: |
-      python3.11 -m pip install --upgrade pip
-      python3.11 -m pip install --upgrade setuptools==68.2.2 wheel
-      python3.11 -m pip install -r requirements.txt
-    startCommand: python3.11 -m gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT app:app
+      set -e
+      echo "=== 🧠 Building Distress Detection App ==="
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+      MODEL_PATH="/data/models/sam_vit_b_01ec64.pth"
+      echo "=== Checking SAM model at ${MODEL_PATH} ==="
+
+      if [ -f "${MODEL_PATH}" ]; then
+        echo "✅ SAM model already exists in persistent disk — skipping download."
+      else
+        echo "⬇️ SAM model not found. You can upload manually via /upload_model after deploy."
+        mkdir -p /data/models
+      fi
+
+      ls -lh "${MODEL_PATH}" || echo "⚠️ SAM model not yet uploaded!"
+
+    startCommand: gunicorn --worker-class eventlet --workers 1 --bind 0.0.0.0:$PORT app:app
+
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: FLASK_ENV
         value: production
+      - key: MODEL_DIR
+        value: /data/models
       - key: SECRET_KEY
         generateValue: true
-    disk:
-      name: pothole-data
-      mountPath: /opt/render/project/src/uploads
-      sizeGB: 1
+      - key: WEB_CONCURRENCY
+        value: 1
+      - key: UPLOAD_FOLDER
+        value: uploads
+      - key: MAX_CONTENT_LENGTH
+        value: "1073741824"  # 1 GB upload limit
+      - key: RUNTIME_ENV
+        value: render
+      - key: MODEL_VARIANT
+        value: vit_b
+      - key: ENABLE_MEMORY_LOG
+        value: true
+      - key: MALLOC_TRIM_THRESHOLD_
+        value: 0   # 🧹 Aggressive memory release back to OS after each request
+      - key: PYTORCH_NO_CUDA_MEMORY_CACHING
+        value: 1   # 🧠 Disable PyTorch’s GPU cache (safe for CPU inference)
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: NUMEXPR_MAX_THREADS
+        value: "2"
+      - key: GUNICORN_CMD_ARGS
+        value: "--preload --max-requests 1 --max-requests-jitter 1"
+
+    healthCheckPath: /health
+    autoDeploy: true
+
+# 🗂 Persistent disk for SAM model + uploads
+disks:
+  - name: sam-model-storage
+    mountPath: /data/models
+    sizeGB: 2  # 💾 2 GB persistent disk for sam_vit_b_01ec64.pth
