@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # ------------------------
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 
 # Use environment variables for data directory, falling back to local defaults
@@ -311,6 +311,7 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     socketio.run(app, host="0.0.0.0", port=port, debug=debug)
+
 
 
 
