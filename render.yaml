@@ -36,7 +36,7 @@ services:
 
     startCommand: |
       echo "🚀 Starting Flask app with Gunicorn + Eventlet"
-      gunicorn app:app --worker-class eventlet -w 1 --timeout 120 -b 0.0.0.0:10000
+      gunicorn app:app --worker-class gevent -w 1 --timeout 300 -b 0.0.0.0:$PORT
 
 
     envVars:
