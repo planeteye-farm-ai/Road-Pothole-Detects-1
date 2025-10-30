@@ -48,7 +48,7 @@ def init_sam():
 
         # Path to the model is now controlled by an environment variable
         checkpoint = os.environ.get('SAM_CHECKPOINT_PATH')
-         default_disk_path = "data/models/sam_vit_b_01ec64.pth"
+        default_disk_path = "data/models/sam_vit_b_01ec64.pth"
 
         # Fallback order
         if not checkpoint:
@@ -309,4 +309,5 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV') == 'development'
     socketio.run(app, host="0.0.0.0", port=port, debug=debug)
+
 
