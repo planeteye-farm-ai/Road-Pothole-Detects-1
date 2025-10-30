@@ -23,8 +23,10 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['DATABASE'] = 'potholes.db'
+# Use environment variables for data directory, falling back to local defaults
+DATA_DIR = os.environ.get('DATA_DIR', 'uploads')
+app.config['UPLOAD_FOLDER'] = DATA_DIR
+app.config['DATABASE'] = os.path.join(DATA_DIR, 'potholes.db')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 app.config['MAX_CONTENT_LENGTH'] = 16*1024*1024  # 16 MB
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -37,50 +39,22 @@ sam_loaded = False
 
 def init_sam():
     """
-    Initialize SAM model:
-    - Downloads checkpoint if missing
-    - Supports retries with exponential backoff
-    - Loads model to device (CPU or GPU)
+    Initialize SAM model from a pre-downloaded checkpoint.
     """
     global predictor, sam_loaded
     try:
-        import requests
-        import time
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Using device: {device}")
 
-        checkpoint = os.environ.get(
-            'SAM_CHECKPOINT_PATH',
-            os.path.join(app.config['UPLOAD_FOLDER'], "sam_vit_b_01ec64.pth")
-        )
-        checkpoint_url = os.environ.get(
-            'SAM_CHECKPOINT_URL',
-            "https://huggingface.co/lllyasviel/Annotators/resolve/main/sam_vit_b_01ec64.pth"
-        )
-
-        # Download checkpoint if missing
-        if not os.path.exists(checkpoint) or os.path.getsize(checkpoint) < 1024:
-            logger.info(f"Downloading SAM checkpoint from {checkpoint_url}...")
-            max_attempts = 5
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    with requests.get(checkpoint_url, stream=True, timeout=60) as r:
-                        r.raise_for_status()
-                        with open(checkpoint, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=8192):
-                                if chunk:
-                                    f.write(chunk)
-                    logger.info("SAM checkpoint downloaded successfully!")
-                    break
-                except Exception as e:
-                    wait = min(30, 2 ** attempt)
-                    logger.error(f"Attempt {attempt}/{max_attempts} failed: {e}. Retrying in {wait}s...")
-                    time.sleep(wait)
-            else:
-                logger.error("Failed to download SAM checkpoint after retries. SAM will not be loaded.")
-                return False
+        # Path to the model is now controlled by an environment variable
+        checkpoint = os.environ.get('SAM_CHECKPOINT_PATH')
+        if not checkpoint or not os.path.exists(checkpoint):
+            logger.error("SAM checkpoint not found. Set SAM_CHECKPOINT_PATH and ensure model is downloaded in the build step.")
+            sam_loaded = False
+            return False
 
         # Load SAM
+        logger.info(f"Loading SAM from checkpoint: {checkpoint}")
         sam = sam_model_registry["vit_b"](checkpoint=checkpoint)
         sam.to(device)
         predictor = SamPredictor(sam)
@@ -90,6 +64,7 @@ def init_sam():
 
     except Exception as e:
         logger.error(f"SAM initialization error: {e}")
+        sam_loaded = False
         return False
 
 # ------------------------
